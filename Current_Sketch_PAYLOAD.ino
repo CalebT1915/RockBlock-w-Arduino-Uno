@@ -3,21 +3,45 @@
 #include <TinyGPS++.h> // NMEA parsing: http://arduiniana.org
 #include <PString.h> // String buffer formatting: http://arduiniana.org
 
-#define BEACON_INTERVAL 600 // Time between transmissions
-#define ROCKBLOCK_RX_PIN 10
-#define ROCKBLOCK_TX_PIN 11
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
+Adafruit_MPU6050 mpu;
+
+#define BEACON_INTERVAL 480 // Time between transmissions
+#define ROCKBLOCK_RX_PIN 7 //YELLOW WIRE
+#define ROCKBLOCK_TX_PIN 6 //Orange WIRE
 #define ROCKBLOCK_SLEEP_PIN 14
 #define ROCKBLOCK_BAUD 19200
-#define GPS_RX_PIN 5
-#define GPS_TX_PIN 6
+#define GPS_RX_PIN 10 //yellow
+#define GPS_TX_PIN 11 // orange
 #define GPS_BAUD 9600
 #define CONSOLE_BAUD 115200
 #define DIAGNOSTICS true // Change this to see diagnostics
 
 SoftwareSerial ssIridium(ROCKBLOCK_RX_PIN, ROCKBLOCK_TX_PIN);
 SoftwareSerial ssGPS(GPS_RX_PIN, GPS_TX_PIN);
-IridiumSBD isbd(ssIridium, ROCKBLOCK_SLEEP_PIN);
+IridiumSBD isbd(ssIridium);
 TinyGPSPlus tinygps;
+
+
+bool isFalling() {
+  /* Get new sensor events with the readings */
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  /* Get acceleration values */
+  float xAccel = a.acceleration.x;
+  float yAccel = a.acceleration.y;
+  float zAccel = a.acceleration.z;
+
+  /* Check if any acceleration value is greater than 60 */
+  if (abs(xAccel) > 60 || abs(yAccel) > 60 || abs(zAccel) > 60) {
+    return true; // Accelerometer detects falling
+  } else {
+    return false; // Accelerometer does not detect falling
+  }
+}
 
 void setup()
 {
@@ -27,12 +51,39 @@ void setup()
   // Setup the RockBLOCK
 
   isbd.setPowerProfile(1);
+
+  Serial.begin(115200);
+  while (!Serial) {
+    delay(10); // will pause Zero, Leonardo, etc until serial console opens
+  }
+
+  // Try to initialize!
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) {
+      delay(10);
+    }
+  }
+  mpu.setAccelerometerRange(MPU6050_RANGE_16_G);
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  Serial.println("");
+  delay(100);
 }
+
 
 void loop()
 {
+  if (!isFalling()) {
+    Serial.println("not falling");
+    return; // Skip the loop if not falling
+  }
+
   bool fixFound = false;
+  bool signalGood = false;
   unsigned long loopStartTime = millis();
+
+  // Rest of the code...
+  Serial.println("falling");
 
   // Step 0: Start the serial ports
   ssIridium.begin(ROCKBLOCK_BAUD);
@@ -57,6 +108,7 @@ void loop()
   // Step 3: Start talking to the RockBLOCK and power it up
   Serial.println("Beginning to talk to the RockBLOCK...");
   ssIridium.listen();
+  
   if (isbd.begin() == ISBD_SUCCESS)
   {
     char outBuffer[60]; // Always try to keep message short
@@ -89,7 +141,7 @@ void loop()
 
   // Sleep
   Serial.println("Going to sleep mode for about 10 minutes...");
-  isbd.sleep();
+  //isbd.sleep();
   ssIridium.end();
   ssGPS.end();
   int elapsedSeconds = (int)((millis() - loopStartTime) / 1000);
